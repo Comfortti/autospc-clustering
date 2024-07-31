@@ -29,7 +29,7 @@ p_codes <- p_codes %>%
             left_join(p_means, by = c("Code"))
 
 # remove region and national results as only interested at the trust and provider level 
-p_means <- p_means[(which(nchar(p_means$Code) > 3)),]
+p_means <- p_means[(which(nchar(p_means$Code) > 2)),]
 
 # add a column to p_means that indicates whether the A&E department is a teaching hospital or not
 p_means <- p_means %>%
@@ -51,8 +51,8 @@ fviz_nbclust(p_final, kmeans, method = "silhouette") + labs(subtitle = "Silhouet
 # k-means clustering
 set.seed(1605)
 k_data_p <- kmeans(p_final, centers = 4, nstart = 25)
-str(k_data)
+str(k_data_p)
 
 # Visualisation 
 p_cluster <- fviz_cluster(k_data_p, data = p_final)
-p_cluster_data <- A_cluster$data 
+p_cluster_data <- p_cluster$data 
