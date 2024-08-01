@@ -3,19 +3,19 @@ library(tidyr)
 library(factoextra)
 library(ggplot2)
 
-# Filtered table to show only monthly and C algorithm data 
+# Filtered full_results table to show only monthly and C algorithm data 
 analysis_table <- full_results_all %>% 
   filter(weeklyOrMonthly == "Monthly", results_set == "C algorithm") %>% 
   group_by(Code)
 
-# Filtered original limits table to only show unique cl for each prov code 
+# Filtered original limits table to only show unique cl for each hospital code 
 unique_limits_table_output_C_algorithm <- limits_table_output_Monthly_C_algorithm %>% 
                                             filter(weeklyOrMonthly == "Monthly") %>% 
                                             distinct(cl, .keep_all = TRUE) %>%
                                             group_by(Code, plotPeriod)
 
 
-# Filtered table to only include the unique columns Code and unique cl 
+# Filtered table to only include the code and cl columns
 trends_limits_table <- unique_limits_table_output_C_algorithm %>%
                         select(Code, cl)
 
@@ -45,8 +45,8 @@ perf_table <- trends_limits_table %>%
          `N-1 cl` = cl_values_3,
          `N cl` = cl_values_4)
 
-# Filter to only include NHS Providers 
-# perf_table[perf_table$Code %in% codes$Prov_Code]
+# inner join with codes.rds to include NHS Provider names
+# change positioning of columns 
 perf_table <- inner_join(perf_table, codes, by = c("Code" = "Prov_Code"))
 perf_table <- perf_table %>% relocate(Prov_Name, .after = Code)
 
@@ -139,28 +139,35 @@ teaching_hospitals <- data.frame('N161H',
 # Change df from short to long 
 colnames(teaching_hospitals) <- "teaching_hosp_codes"
 
-# Transpose the data frame to make each code a row
+# Transpose the df to make each code a row
 teaching_hospitals <- t(teaching_hospitals)
 
-# Convert the transposed matrix back to a data frame
+# Convert the transposed matrix back into a df
 teaching_hospitals <- data.frame(teaching_hosp_codes = teaching_hospitals[,1])
 
-# Populate missing Prov Names 
+# Read csv file containing Prov Names with associated hospital code 
 hospital_codes <- read.csv("Clustering Codes/England and Scotland Hospital Codes.csv")
 
+# create and store teaching hospitals with NA provider names 
 na_rows <- teaching_hospitals %>% filter(is.na(Prov_Name))
 
+# create and store the hospital code and provider name from the csv file
 hospital_mapping <- hospital_codes %>% select(ID_Name, Name_of_Hospital)
 
+# left join the teaching hosp codes with the id name 
+# populate the missing na values 
+# drops the name of hospital column 
 filled_na_rows <- na_rows %>%
   left_join(hospital_mapping, by = c("teaching_hosp_codes" = "ID_Name")) %>%
   mutate(Prov_Name = ifelse(is.na(Prov_Name), Name_of_Hospital, Prov_Name)) %>%
   select(-Name_of_Hospital)
 
+# filter the provider names that are not NA and combine the dfs
 teaching_hospitals <- teaching_hospitals %>%
   filter(!is.na(Prov_Name)) %>%
   bind_rows(filled_na_rows)
 
+# sorts the df by teaching hosp code 
 teaching_hospitals <- teaching_hospitals %>% arrange(teaching_hosp_codes)
 
 # Filter diff_table for rows with "University" in Prov_Name
@@ -172,7 +179,7 @@ university_hospitals <- diff_table %>%
 university_hospitals <- university_hospitals %>%
   rename(teaching_hosp_codes = Code, Prov_Name = Prov_Name.x)
 
-# Combine with teaching_hospital_codes
+# Combine with university codes with teaching_hospital_codes
 teaching_hospital_codes <- bind_rows(teaching_hospital_codes, university_hospitals)
 
 # Add a column to diff_table called teaching_hospital where 1 means it is a 
@@ -183,10 +190,10 @@ diff_table <- diff_table %>%
 # Convert columns (except Code column) from chr to numeric and standardise results
 std_perf_table <- diff_table %>% mutate(across(where(is.numeric), scale))
 
-# Remove the "Codes" and "Prov_Name" column
+# Remove the "Codes" and "Prov_Name" column as not to be used in kmeans 
 test_table <- std_perf_table[-c(1, 2)]
 
-# Optimal number of clusters 
+# Graphs to identify optimal number of clusters 
 fviz_nbclust(test_table, kmeans, method = "wss") + labs(subtitle = "Elbow Method")
 fviz_nbclust(test_table, kmeans, method = "silhouette") + labs(subtitle = "Silhouette Method")
 

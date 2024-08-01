@@ -38,6 +38,10 @@ p_means <- p_means %>%
 # remove NaN and NA values 
 p_means <- p_means %>% drop_na(icl_mean)
 
+# left join performance table with p_means 
+p_means <- p_means %>%
+            left_join(perf_final, by = c("Code" = "Code"))
+
 # Standardise results for kmeans clustering 
 std_p_means <- p_means %>% mutate(across(where(is.numeric), scale))
 
@@ -50,7 +54,7 @@ fviz_nbclust(p_final, kmeans, method = "silhouette") + labs(subtitle = "Silhouet
 
 # k-means clustering
 set.seed(1605)
-k_data_p <- kmeans(p_final, centers = 4, nstart = 25)
+k_data_p <- kmeans(p_final, centers = 3, nstart = 25)
 str(k_data_p)
 
 # Visualisation 
