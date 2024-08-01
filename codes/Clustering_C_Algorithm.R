@@ -1,25 +1,20 @@
-library(dplyr)
-library(tidyr)
-library(factoextra)
-library(ggplot2)
+# Filtered table to show only monthly and C algorithm data 
+# aided in the decision to have 4 columns to represent the max number if recalcs
+c_full_results <- full_results_all %>% 
+                  dplyr::filter(weeklyOrMonthly == "Monthly", results_set == "C algorithm") %>% 
+                  dplyr::group_by(Code)
 
-# Filtered full_results table to show only monthly and C algorithm data 
-analysis_table <- full_results_all %>% 
-  filter(weeklyOrMonthly == "Monthly", results_set == "C algorithm") %>% 
-  group_by(Code)
+# create and store data containing monthly data for the P algorithm from limits table
+# this data is to eventually be used for kmeans clustering 
+# Filtered to only show unique cl for each hosp code 
+# Filtered to only include the code and cl
+c_limits_results <- limits_table_output_Monthly_C_algorithm %>% 
+                    dplyr::filter(weeklyOrMonthly == "Monthly") %>% 
+                    dplyr::distinct(cl, .keep_all = TRUE) %>%
+                    dplyr::group_by(Code, plotPeriod) %>%
+                    dplyr::select(Code, plotPeriod, cl)
 
-# Filtered original limits table to only show unique cl for each hospital code 
-unique_limits_table_output_C_algorithm <- limits_table_output_Monthly_C_algorithm %>% 
-                                            filter(weeklyOrMonthly == "Monthly") %>% 
-                                            distinct(cl, .keep_all = TRUE) %>%
-                                            group_by(Code, plotPeriod)
-
-
-# Filtered table to only include the code and cl columns
-trends_limits_table <- unique_limits_table_output_C_algorithm %>%
-                        select(Code, cl)
-
-# Function to replicate previous column until 4 columns for the cl exist 
+# Function to replicate most recent column until 4 columns for the cl exist 
 new_cl_columns <- function(cl_values) {
   n <- length(cl_values)
   cl_values <- as.character(cl_values)
@@ -35,35 +30,40 @@ new_cl_columns <- function(cl_values) {
 }
 
 # Creation of table to show changes in cl across different NHS Providers 
-perf_table <- trends_limits_table %>%
-  group_by(Code) %>%
-  summarise(cl_values = list(new_cl_columns(cl))) %>%
-  unnest_wider(cl_values, names_sep = "_") %>%
-  mutate(across(starts_with("cl_values_"), as.numeric)) %>%
-  rename(`N-3 cl` = cl_values_1,
-         `N-2 cl` = cl_values_2,
-         `N-1 cl` = cl_values_3,
-         `N cl` = cl_values_4)
+c_limit_changes <- c_limits_results %>%
+                   dplyr::group_by(Code) %>%
+                   dplyr::summarise(cl_values = list(new_cl_columns(cl))) %>%
+                   tidyr::unnest_wider(cl_values, names_sep = "_") %>%
+                   dplyr::mutate(across(starts_with("cl_values_"), as.numeric)) %>%
+                   dplyr::rename(`N-3 cl` = cl_values_1,
+                      `N-2 cl` = cl_values_2,
+                      `N-1 cl` = cl_values_3,
+                      `N cl` = cl_values_4)
 
-# inner join with codes.rds to include NHS Provider names
-# change positioning of columns 
-perf_table <- inner_join(perf_table, codes, by = c("Code" = "Prov_Code"))
-perf_table <- perf_table %>% relocate(Prov_Name, .after = Code)
+# Inner join the codes list with the c_limit_changes to filter out the 
+# national and regional codes which are included in the c_limit_changes tibble
+# as the AE_Data table where codes is derived from only contains provider level codes  
+c_limit_changes <- dplyr::inner_join(c_limit_changes, codes, by = c("Code" = "Prov_Code"))
+c_limit_changes <- c_limit_changes %>% dplyr::relocate(Prov_Name, .after = Code)
 
-# Difference table calculation to show difference between rows in perf_table instead of raw value 
-first_diff <- perf_table[, 4] - perf_table[, 3]
-second_diff <- perf_table[, 5] - perf_table[, 4]
-third_diff <- perf_table[, 6] - perf_table[, 5] 
-diff_table <- data.frame(Code = perf_table[, 1],
-                         Prov_Name = perf_table[, 2],
+# calculate and store the differences between the central lines in the c_limit_changes tibble
+first_diff <- c_limit_changes[, 4] - c_limit_changes[, 3]
+second_diff <- c_limit_changes[, 5] - c_limit_changes[, 4]
+third_diff <- c_limit_changes[, 6] - c_limit_changes[, 5] 
+c_limit_diff <- data.frame(Code = c_limit_changes[, 1],
+                         Prov_Name = c_limit_changes[, 2],
                          'N-2 cl Diff' = first_diff,
                          'N-1 cl Diff' = second_diff, 
                          'N cl Diff' = third_diff) 
 
-# Remove rightmost column as only 1 hospital has a non 0 value in it 
-diff_table <- diff_table[-c(5)]
+# Remove rightmost column as only 1 hospital has a non 0 value in it, heading are changed accordingly
+c_limit_diff <- c_limit_diff[-c(5)]
+colnames(c_limit_diff) <- c("Code", "Prov_name", "N-1_cl_diff", "N_cl_diff")
+
+# ============= Creation of Teaching Hospital Codes Tibble =================
 
 # Create df of all teaching hospitals in England and Scotland 
+# sourced from wiki list of teaching hospitals 
 teaching_hospitals <- data.frame('N161H', 
                                  'N101H',
                                  'T113H',
@@ -142,66 +142,69 @@ colnames(teaching_hospitals) <- "teaching_hosp_codes"
 # Transpose the df to make each code a row
 teaching_hospitals <- t(teaching_hospitals)
 
-# Convert the transposed matrix back into a df
+# Convert the transposed matrix back to a df
 teaching_hospitals <- data.frame(teaching_hosp_codes = teaching_hospitals[,1])
 
-# Read csv file containing Prov Names with associated hospital code 
-hospital_codes <- read.csv("Clustering Codes/England and Scotland Hospital Codes.csv")
+# Read csv file containing Prov Names with associated hospital code  
+hospital_codes <- utils::read.csv("Clustering Codes/England and Scotland Hospital Codes.csv")
 
 # create and store teaching hospitals with NA provider names 
-na_rows <- teaching_hospitals %>% filter(is.na(Prov_Name))
+na_rows <- teaching_hospitals %>% dplyr::filter(is.na(Prov_Name))
 
 # create and store the hospital code and provider name from the csv file
-hospital_mapping <- hospital_codes %>% select(ID_Name, Name_of_Hospital)
+hospital_mapping <- hospital_codes %>% dplyr::select(ID_Name, Name_of_Hospital)
 
 # left join the teaching hosp codes with the id name 
 # populate the missing na values 
-# drops the name of hospital column 
+# drops the name of hospital column
 filled_na_rows <- na_rows %>%
-  left_join(hospital_mapping, by = c("teaching_hosp_codes" = "ID_Name")) %>%
-  mutate(Prov_Name = ifelse(is.na(Prov_Name), Name_of_Hospital, Prov_Name)) %>%
-  select(-Name_of_Hospital)
+                  dplyr::left_join(hospital_mapping, by = c("teaching_hosp_codes" = "ID_Name")) %>%
+                  dplyr::mutate(Prov_Name = ifelse(is.na(Prov_Name), Name_of_Hospital, Prov_Name)) %>%
+                  dplyr::select(-Name_of_Hospital)
 
 # filter the provider names that are not NA and combine the dfs
 teaching_hospitals <- teaching_hospitals %>%
-  filter(!is.na(Prov_Name)) %>%
-  bind_rows(filled_na_rows)
+                      dplyr::filter(!is.na(Prov_Name)) %>%
+                      dplyr::bind_rows(filled_na_rows)
 
 # sorts the df by teaching hosp code 
-teaching_hospitals <- teaching_hospitals %>% arrange(teaching_hosp_codes)
+teaching_hospitals <- teaching_hospitals %>% dplyr::arrange(teaching_hosp_codes)
 
-# Filter diff_table for rows with "University" in Prov_Name
-university_hospitals <- diff_table %>%
-  filter(grepl("University", Prov_Name.x)) %>%
-  select(Code, Prov_Name.x)
+# Filter c_limit_diff for rows with "University" in Prov_Name
+university_hospitals <- c_limit_diff %>%
+                        dplyr::filter(grepl("University", Prov_Name.x)) %>%
+                        dplyr::select(Code, Prov_Name.x)
 
 # Rename columns for consistency
 university_hospitals <- university_hospitals %>%
-  rename(teaching_hosp_codes = Code, Prov_Name = Prov_Name.x)
+                        dplyr::rename(teaching_hosp_codes = Code, Prov_Name = Prov_Name.x)
 
-# Combine with university codes with teaching_hospital_codes
-teaching_hospital_codes <- bind_rows(teaching_hospital_codes, university_hospitals)
+# Combine with teaching_hospital_codes
+teaching_hospital_codes <- dplyr::bind_rows(teaching_hospital_codes, university_hospitals)
 
-# Add a column to diff_table called teaching_hospital where 1 means it is a 
+# Add a column to c_limit_diff called teaching_hospital where 1 means it is a 
 # teaching or university hospital and 0 means it is not
-diff_table <- diff_table %>%
-  mutate(teaching_hospital = as.integer(Code %in% teaching_hospital_codes$teaching_hosp_codes))
+c_limit_diff <- c_limit_diff %>%
+                dplyr::mutate(teaching_hospital = as.integer(Code %in% teaching_hospital_codes$teaching_hosp_codes))
+
+# ============= K-means Clustering =================
 
 # Convert columns (except Code column) from chr to numeric and standardise results
-std_perf_table <- diff_table %>% mutate(across(where(is.numeric), scale))
+std_c_diff <- c_limit_diff %>% dplyr::mutate(across(where(is.numeric), scale))
 
-# Remove the "Codes" and "Prov_Name" column as not to be used in kmeans 
-test_table <- std_perf_table[-c(1, 2)]
+# drop "Codes" and "Prov_name" column
+c_clustering <- std_c_diff[-c(1, 2)]
 
-# Graphs to identify optimal number of clusters 
-fviz_nbclust(test_table, kmeans, method = "wss") + labs(subtitle = "Elbow Method")
-fviz_nbclust(test_table, kmeans, method = "silhouette") + labs(subtitle = "Silhouette Method")
+# Optimal number of clusters 
+factoextra::fviz_nbclust(c_clustering, kmeans, method = "wss") + labs(subtitle = "Elbow Method")
+factoextra::fviz_nbclust(c_clustering, kmeans, method = "silhouette") + labs(subtitle = "Silhouette Method")
 
 # k-means clustering
 set.seed(1605)
-k_data <- kmeans(test_table, centers = 5, nstart = 25)
-str(k_data)
+k_data_c <- kmeans(c_clustering, centers = 3, nstart = 25)
+str(k_data_c)
 
 # Visualisation 
-A_cluster <- fviz_cluster(k_data, data = test_table)
-A_cluster_data <- A_cluster$data 
+factoextra::fviz_cluster(k_data_c, data = c_clustering)
+c_cluster <- factoextra::fviz_cluster(k_data_c, data = c_clustering)
+c_cluster_data <- c_cluster$data 
